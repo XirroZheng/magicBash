@@ -76,6 +76,18 @@ static void free_argv(char **argv)
     free(argv);
 }
 
+/* A failed redirection must stop the command before it uses inherited I/O. */
+static void redirect_file(const char *path, int flags, int target)
+{
+    int fd = open(path, flags, 0644);
+    if (fd < 0 || dup2(fd, target) < 0) {
+        fprintf(stderr, "bash-llm: %s: %s\n", path, strerror(errno));
+        _exit(1);
+    }
+    if (fd != target)
+        close(fd);
+}
+
 char *llm_exec_pipeline(const char **pipeline, int n_cmds,
                          const char *stdin_file, const char *stdout_file,
                          int append, int *exit_status)
@@ -134,16 +146,14 @@ char *llm_exec_pipeline(const char **pipeline, int n_cmds,
             sigprocmask(SIG_SETMASK, &old_mask, NULL);
 
             if (i == 0 && stdin_file) {
-                int fd = open(stdin_file, O_RDONLY);
-                if (fd >= 0) { dup2(fd, STDIN_FILENO); close(fd); }
+                redirect_file(stdin_file, O_RDONLY, STDIN_FILENO);
             } else if (i > 0) {
                 dup2(pipefds[2 * (i - 1)], STDIN_FILENO);
             }
 
             if (i == n_cmds - 1 && stdout_file) {
                 int flags = O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC);
-                int fd = open(stdout_file, flags, 0644);
-                if (fd >= 0) { dup2(fd, STDOUT_FILENO); close(fd); }
+                redirect_file(stdout_file, flags, STDOUT_FILENO);
             } else if (i < n_cmds - 1) {
                 dup2(pipefds[2 * i + 1], STDOUT_FILENO);
             } else if (capture_pipe[1] >= 0) {

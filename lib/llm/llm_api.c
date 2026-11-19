@@ -10,6 +10,7 @@
 #include "llm_history.h"
 #include "llm_config.h"
 #include "llm_streams.h"
+#include "llm_sandbox.h"
 #include "cJSON.h"
 
 static char *g_api_url = NULL;
@@ -173,7 +174,12 @@ static void spinner_stop(void)
 static char *build_system_prompt(const char *cwd, const char *last_output,
                                   const char *matched_cmds, int first_word_is_cmd)
 {
-    size_t sys_len = strlen(SYSTEM_PROMPT) + strlen(cwd) + 576;
+    const char *sandbox_note = llm_sandbox_enabled()
+        ? "Tools run in an isolated workspace rooted at /work. Use relative paths "
+          "or paths under /work. File changes await the user's approval before "
+          "being applied to the project, so describe them as sandbox changes.\n"
+        : "";
+    size_t sys_len = strlen(SYSTEM_PROMPT) + strlen(cwd) + strlen(sandbox_note) + 576;
     if (matched_cmds) sys_len += strlen(matched_cmds) + 256;
 
     time_t now = time(NULL);
@@ -187,9 +193,9 @@ static char *build_system_prompt(const char *cwd, const char *last_output,
 
     char *sys_buf = malloc(sys_len);
     int off = snprintf(sys_buf, sys_len,
-             "%s\n\nCurrent directory: %s\nCurrent time: %s\nUser: %s%s%s\n",
+             "%s\n\nCurrent directory: %s\nCurrent time: %s\nUser: %s%s%s\n%s",
              SYSTEM_PROMPT, cwd, timestr, user,
-             hostname[0] ? "@" : "", hostname);
+             hostname[0] ? "@" : "", hostname, sandbox_note);
 
     if (matched_cmds) {
         off += snprintf(sys_buf + off, sys_len - off,

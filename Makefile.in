@@ -926,6 +926,7 @@ installdirs:
 
 install:	.made installdirs
 	$(INSTALL_PROGRAM) $(INSTALLMODE) $(Program) $(DESTDIR)$(bindir)/$(Program)
+	$(INSTALL_SCRIPT) $(INSTALLMODE2) $(srcdir)/lib/llm/aibash-sandbox.py $(DESTDIR)$(bindir)/aibash-sandbox
 	$(INSTALL_SCRIPT) $(INSTALLMODE2) bashbug $(DESTDIR)$(bindir)/bashbug
 	$(INSTALL_DATA) $(OTHER_DOCS) $(DESTDIR)$(docdir)
 	-( cd $(DOCDIR) ; $(MAKE) $(BASH_MAKEFLAGS) \
@@ -999,6 +1000,7 @@ uninstall-headers:
 
 uninstall:	.made
 	$(RM) $(DESTDIR)$(bindir)/$(Program) $(DESTDIR)$(bindir)/bashbug
+	$(RM) $(DESTDIR)$(bindir)/aibash-sandbox
 	-( cd $(DESTDIR)$(docdir) && ${RM} ${OTHER_INSTALLED_DOCS} )
 	-( cd $(DOCDIR) ; $(MAKE) $(BASH_MAKEFLAGS) \
 		man1dir=$(man1dir) man1ext=$(man1ext) \

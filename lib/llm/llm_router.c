@@ -7,6 +7,7 @@
 #include "llm_tools.h"
 #include "llm_exec.h"
 #include "llm_safety.h"
+#include "llm_sandbox.h"
 #include "llm_streams.h"
 #include "llm_manscan.h"
 #include "llm_config.h"
@@ -15,6 +16,7 @@
 extern char *sh_single_quote(const char *);
 
 static const server_config_t *g_conf = NULL;
+static int sandbox_worker;
 
 void llm_router_init(const server_config_t *conf)
 {
@@ -116,7 +118,7 @@ static char *run_native_cat(const char *path, int *exit_status)
                            exit_status);
 }
 
-static char *handle_run(cJSON *args, int *exit_status)
+static char *handle_run(cJSON *args, const char *arguments, int *exit_status)
 {
     if (!args) return strdup("error: invalid arguments");
 
@@ -154,7 +156,7 @@ static char *handle_run(cJSON *args, int *exit_status)
     /* Models sometimes split "cat ./file" into a two-stage pipeline.
        Only reinterpret a literal, non-executable file as cat's operand. */
     struct stat operand;
-    if (n == 2 && !stdin_f && !stdout_f && strcmp(cmds[0], "cat") == 0
+    if (!llm_sandbox_enabled() && n == 2 && !stdin_f && !stdout_f && strcmp(cmds[0], "cat") == 0
         && strchr(cmds[1], '/') && stat(cmds[1], &operand) == 0
         && S_ISREG(operand.st_mode)
         && !(operand.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
@@ -173,7 +175,7 @@ static char *handle_run(cJSON *args, int *exit_status)
         strncat(desc, stdout_f->valuestring, sizeof(desc) - strlen(desc) - 1);
     }
 
-    if (!pipeline_is_safe(cmds, n, stdout_f)) {
+    if (!sandbox_worker && !pipeline_is_safe(cmds, n, stdout_f)) {
         if (!llm_safety_confirm(desc)) {
             free(cmds);
             return strdup("[denied by user]");
@@ -184,7 +186,9 @@ static char *handle_run(cJSON *args, int *exit_status)
     const char *sout = (stdout_f && cJSON_IsString(stdout_f)) ? stdout_f->valuestring : NULL;
     int append = (append_j && cJSON_IsTrue(append_j));
 
-    char *result = llm_exec_pipeline(cmds, n, sin, sout, append, exit_status);
+    char *result = llm_sandbox_enabled()
+        ? llm_sandbox_execute("run", arguments, exit_status)
+        : llm_exec_pipeline(cmds, n, sin, sout, append, exit_status);
     if (exit_status) {
         free(cmds);
         return result;
@@ -242,7 +246,13 @@ int llm_router_dispatch_direct(const tool_call_t *tc, int *exit_status)
     }
 
     *exit_status = 1;
-    if (is_ls && cJSON_IsString(cJSON_GetObjectItem(args, "prefix"))) {
+    if (!is_run && llm_sandbox_enabled()) {
+        char *error = llm_sandbox_execute(tc->name, tc->arguments, exit_status);
+        if (error) {
+            fprintf(stderr, "aibash: %s\n", error);
+            free(error);
+        }
+    } else if (is_ls && cJSON_IsString(cJSON_GetObjectItem(args, "prefix"))) {
         char *result = llm_list_directory(args, exit_status);
         if (!result) {
             *exit_status = 1;
@@ -262,7 +272,7 @@ int llm_router_dispatch_direct(const tool_call_t *tc, int *exit_status)
     } else {
         char *error;
         if (is_run)
-            error = handle_run(args, exit_status);
+            error = handle_run(args, tc->arguments, exit_status);
         else if (is_cat)
             error = run_native_cat(cJSON_GetStringValue(cJSON_GetObjectItem(args, "path")),
                                    exit_status);
@@ -286,7 +296,7 @@ char *llm_router_dispatch(const tool_call_t *tc)
 
     if (strcmp(tc->name, "run") == 0) {
         cJSON *args = cJSON_Parse(tc->arguments ? tc->arguments : "{}");
-        char *result = handle_run(args, NULL);
+        char *result = handle_run(args, tc->arguments ? tc->arguments : "{}", NULL);
         cJSON_Delete(args);
         return result;
     }
@@ -295,7 +305,7 @@ char *llm_router_dispatch(const tool_call_t *tc)
     if (!bi)
         return strdup("error: unknown tool");
 
-    if (bi->safety_tier >= SAFETY_CONFIRM) {
+    if (!sandbox_worker && bi->safety_tier >= SAFETY_CONFIRM) {
         char desc[512];
         snprintf(desc, sizeof(desc), "%s: %s",
                  bi->name, tc->arguments ? tc->arguments : "{}");
@@ -303,5 +313,28 @@ char *llm_router_dispatch(const tool_call_t *tc)
             return strdup("[denied by user]");
     }
 
-    return bi->handler(tc->arguments ? tc->arguments : "{}");
+    const char *arguments = tc->arguments ? tc->arguments : "{}";
+    return llm_sandbox_enabled()
+        ? llm_sandbox_execute(tc->name, arguments, NULL)
+        : bi->handler(arguments);
+}
+
+int llm_router_sandbox_worker(char *name, char *arguments, int direct)
+{
+    tool_call_t call = {0};
+    call.name = name;
+    call.arguments = arguments;
+    sandbox_worker = 1;
+    if (direct) {
+        int status = 1;
+        llm_router_dispatch_direct(&call, &status);
+        return status;
+    }
+
+    char *result = llm_router_dispatch(&call);
+    if (!result)
+        return 1;
+    fputs(result, stdout);
+    free(result);
+    return 0;
 }

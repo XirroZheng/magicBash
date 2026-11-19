@@ -36,4 +36,10 @@ llm 打印 demo.txt 的内容
 
 终端输出 `hello magicBash`。
 
+## 模型工具沙箱
+
+Linux 上安装 Bubblewrap、Python 3.9+ 和 Git，在 `~/.bashllmrc` 的 `[settings]` 中把 `sandbox_root` 设为项目的绝对路径，再从该项目内启动 aibash。以 root 启动时需要预先创建非登录账号 `magicbash-sandbox`。
+
+每轮模型工具调用共享一份项目副本，工具进程的网络独立隔离。aibash 预览普通文件和目录的变化，并在确认后写回项目。未确认的修改随本轮工作区清理。
+
 [上游 aibash](https://github.com/jstormes/aibash) · [原 README](README.upstream.md) · [许可证](COPYING)

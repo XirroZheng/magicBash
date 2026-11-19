@@ -17,4 +17,7 @@ int llm_router_dispatch_direct(const tool_call_t *tc, int *exit_status);
  */
 char *llm_router_dispatch(const tool_call_t *tc);
 
+/* Internal entry point used by the isolated executable. */
+int llm_router_sandbox_worker(char *name, char *arguments, int direct);
+
 #endif /* BASH_LLM_ROUTER_H */

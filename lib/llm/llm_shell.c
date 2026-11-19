@@ -8,6 +8,7 @@
 #include "llm_shell.h"
 #include "llm_api.h"
 #include "llm_router.h"
+#include "llm_sandbox.h"
 #include "llm_history.h"
 #include "llm_streams.h"
 #include "cJSON.h"
@@ -185,7 +186,8 @@ static void llm_shell_agentic_loop(llm_shell_ctx_t *ctx, llm_response_t *resp,
         if (interrupt_state) break;
 
         if (!getcwd(cwd, sizeof(cwd))) strcpy(cwd, ".");
-        resp = llm_chat_stream(NULL, cwd, ctx->last_output, NULL, 0, cbs);
+        const char *working_dir = llm_sandbox_cwd();
+        resp = llm_chat_stream(NULL, working_dir ? working_dir : cwd, ctx->last_output, NULL, 0, cbs);
     }
 
     if (resp && resp->num_tool_calls == 0 && resp->text && resp->text[0]) {
@@ -224,6 +226,8 @@ int llm_shell_query(llm_shell_ctx_t *ctx, const char *query, const char *context
 
     char cwd[4096];
     if (!getcwd(cwd, sizeof(cwd))) strcpy(cwd, ".");
+    if (llm_sandbox_begin(ctx->servers->sandbox_root, cwd))
+        return 1;
 
     char *full_query;
     if (context) {
@@ -241,12 +245,14 @@ int llm_shell_query(llm_shell_ctx_t *ctx, const char *query, const char *context
     /* Wait for tool calls before deciding whether to print response text. */
     llm_stream_cbs cbs = ctx->cbs ? *ctx->cbs : (llm_stream_cbs){0};
     cbs.on_token = defer_chat_token;
-    llm_response_t *resp = llm_chat_stream(full_query, cwd, ctx->last_output,
+    const char *working_dir = llm_sandbox_cwd();
+    llm_response_t *resp = llm_chat_stream(full_query, working_dir ? working_dir : cwd, ctx->last_output,
                                             NULL, 0, &cbs);
     free(full_query);
 
     if (!resp) {
         streams_llm_active = 0;
+        llm_sandbox_finish(0);
         fprintf(stderr, "bash-llm: LLM request failed\n");
         return 1;
     }
@@ -266,5 +272,8 @@ int llm_shell_query(llm_shell_ctx_t *ctx, const char *query, const char *context
         llm_shell_agentic_loop(ctx, resp, &cbs);
     }
     streams_llm_active = 0;
+    int apply_status = llm_sandbox_finish(status == 0 && !interrupt_state);
+    if (status == 0)
+        status = apply_status;
     return status;
 }

@@ -78,6 +78,10 @@ server_config_t *llm_serverconf_load(void)
                     conf->man_max_bytes = atoi(val);
                 else if (strcmp(key, "command_not_found") == 0)
                     conf->command_not_found = atoi(val);
+                else if (strcmp(key, "sandbox_root") == 0) {
+                    free(conf->sandbox_root);
+                    conf->sandbox_root = strdup(val);
+                }
                 continue;
             }
 
@@ -120,6 +124,7 @@ void llm_serverconf_free(server_config_t *conf)
         free(conf->servers[i].model);
         free(conf->servers[i].api_key);
     }
+    free(conf->sandbox_root);
     free(conf);
 }
 

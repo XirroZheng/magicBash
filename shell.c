@@ -37,6 +37,9 @@
 #include <stdio.h>
 #include <signal.h>
 #include <errno.h>
+#if defined (HAVE_LLM) && defined (__linux__)
+#  include <sys/prctl.h>
+#endif
 #include "filecntl.h"
 #if defined (HAVE_PWD_H)
 #  include <pwd.h>
@@ -388,6 +391,19 @@ main (int argc, char **argv, char **env)
 #endif /* __OPENNT || __MVS__ */
 
   USE_VAR(argc);
+#if defined (HAVE_LLM) && defined (__linux__)
+  if (argc == 5 && STREQ (argv[1], "--aibash-sandbox-worker"))
+    {
+      extern int llm_router_sandbox_worker (char *, char *, int);
+      /* The worker starts from Bubblewrap without loading shell profiles. */
+      if (prctl (PR_GET_NO_NEW_PRIVS, 0L, 0L, 0L, 0L) != 1)
+        {
+          fputs ("aibash: sandbox worker requires no_new_privs\n", stderr);
+          return 1;
+        }
+      return (llm_router_sandbox_worker (argv[2], argv[3], STREQ (argv[4], "direct")));
+    }
+#endif
   USE_VAR(argv);
   USE_VAR(env);
   USE_VAR(code);
